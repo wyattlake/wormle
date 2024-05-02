@@ -30,6 +30,112 @@ contract Wormle {
         G1Point y;
     }
 
+    struct HandCard {
+        EncryptedMessage id;
+        EncryptedMessage k;
+    }
+    EncryptedMessage[6] public hand;
+
+    function drawCard(uint8 id, uint256 k, uint256 k2, G1Point memory publicKey) private returns (bool, HandCard memory) {
+    
+        // Shift k right by 8 bits
+        uint256 shiftedData = k >> 8;
+
+        // Convert id to uint256 and shift it left by (256 - 8) bits
+        // 256 total bits in a uint256, and shifting id left by (256 - 8 = 248) bits
+        uint256 idShifted = uint256(id) << 248;
+
+        // Combine shiftedData with idShifted using bitwise OR to place id in the front
+        shiftedData = shiftedData | idShifted;
+
+        //shift to the right 10 bits so encoding works without loss of data
+        shiftedData = shiftedData >> 10;
+
+        //shifted so that it can be encrypted
+        uint256 shiftedK = k >> 10;
+
+        bool success1;
+        bool success2;
+
+        EncryptedMessage memory card;
+        EncryptedMessage memory kVal;
+
+
+
+        //encrypt shiftedData with shiftedk 
+        (success1, card) = encrypt(shiftedData, publicKey, shiftedK);
+
+        //encrypt the k value with k2, used for validation
+        (success2, kVal) = encrypt(shiftedK, publicKey, k2);
+
+        HandCard memory handCard = HandCard(card, kVal);
+
+        if(!success1 && !success2) {
+            return (false, handCard);
+        }
+
+        
+        return (true, handCard);
+    }
+
+    //return true or false for success, updates state of hand remembering only the encrypted id, returns the encrypted HandCard array (id and k)
+    function drawHand(G1Point memory publicKey) public returns (bool, HandCard[6] memory) {
+        HandCard[6] memory pushToPlayerHand;
+        bool successLoop;
+        for (uint8 i = 0; i < 6; i++) {
+            HandCard memory handCard;
+            bool success;
+            //Dummy k values for now
+            (success, handCard) = drawCard(i, uint256(123 + i), uint256(234 + i), publicKey);
+            hand[i] = handCard.id;
+            pushToPlayerHand[i] = handCard;
+            if(!success) {
+                successLoop = false;
+            }
+        }
+        if(!successLoop) {
+            return (false, pushToPlayerHand);
+        }
+        return (true, pushToPlayerHand);  
+    }
+
+    function viewHand() public view returns (EncryptedMessage[6] memory) {
+        return hand;
+    }
+
+    function validateCard(uint8 index, uint256 data, uint256 k) public returns (bool) {
+        //no need to shift data since it is already shifted to be encoded correctly
+        //need to shift k though since it is encoded
+        uint256 shiftedK = k >> 10;
+
+        EncryptedMessage memory cardId;
+
+        bool success;
+        (success, cardId) = encrypt(data, G(), shiftedK);
+
+        if(!success) {
+            return false;
+        }
+        if(cardId.x.x == hand[index].x.x && cardId.x.y == hand[index].x.y && cardId.y.x == hand[index].y.x && cardId.y.y == hand[index].y.y) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    function useCard(uint8 index, uint256 data, uint256 k) public returns (bool, uint8) {
+        if(validateCard(index, data, k)) {
+            hand[index] = EncryptedMessage(G1Point(0, 0), G1Point(0, 0));
+            return (true, getId(data));
+        } else {
+            return (false, 0);
+        }
+    }
+
+    function getId(uint256 encoded) public view returns (uint8) {
+        return uint8(encoded >> 248);
+    }
+
     function G() private pure returns (G1Point memory) {
         return G1Point(1, 2);
     }
@@ -60,7 +166,8 @@ contract Wormle {
 
     function encrypt(
         uint256 data,
-        G1Point memory publicKey
+        G1Point memory publicKey,
+        uint256 k
     ) private returns (bool, EncryptedMessage memory) {
         G1Point memory encodedData;
         bool success;
@@ -71,7 +178,6 @@ contract Wormle {
             // If the encoding fails
             return (false, EncryptedMessage(G1Point(0, 0), G1Point(0, 0)));
         } else {
-            uint256 k = 239432098409324; // Change to random number
 
             // k is a random number
             // G is the generator point
@@ -157,6 +263,7 @@ contract Wormle {
         return output[0];
     }
 
+    // Point addition on the elliptic curve
     function g1add(
         G1Point memory p1,
         G1Point memory p2
@@ -178,6 +285,7 @@ contract Wormle {
         require(success);
     }
 
+    // scalar multiplication on elliptic curve
     function g1mul(
         G1Point memory p,
         uint256 s
